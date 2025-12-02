@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rakshak AI Chatbot</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap" rel="stylesheet">
+    <!-- Load Font Awesome Icons (for send button) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    
+    <style>
+        /* Define the 7 colors for the animation */
+        .animated-text {
+            --color-1: #ef4444; /* red-500 */
+            --color-2: #f97316; /* orange-500 */
+            --color-3: #f59e0b; /* yellow-500 */
+            --color-4: #10b981; /* green-500 */
+            --color-5: #3b82f6; /* blue-500 */
+            --color-6: #6366f1; /* indigo-500 */
+            --color-7: #8b5cf6; /* violet-500 */
+            animation: color-shift 7s infinite linear alternate;
+        }
+
+        @keyframes color-shift {
+            0%   { color: var(--color-1); }
+            14%  { color: var(--color-2); }
+            28%  { color: var(--color-3); }
+            42%  { color: var(--color-4); }
+            57%  { color: var(--color-5); }
+            71%  { color: var(--color-6); }
+            85%  { color: var(--color-7); }
+            100% { color: var(--color-1); }
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* light gray background */
+        }
+        
+        /* Custom scrollbar for better aesthetics */
+        #chat-window::-webkit-scrollbar {
+            width: 8px;
+        }
+        #chat-window::-webkit-scrollbar-thumb {
+            background-color: #d1d5db;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <!-- Main Application Container -->
+    <div id="app-container" class="w-full max-w-lg bg-white rounded-xl shadow-2xl flex flex-col h-[90vh]">
+        
+        <!-- Header -->
+        <header class="p-4 border-b border-gray-200 sticky top-0 bg-white rounded-t-xl z-10">
+            <h1 id="app-title" class="text-3xl font-extrabold text-center animated-text">
+                R A K S H A K
+            </h1>
+            <p class="text-sm text-center text-gray-500 mt-1">Your Personal AI Assistant</p>
+        </header>
+
+        <!-- Facebook Follow Suggestion -->
+        <div class="p-3 bg-blue-50 border-b border-blue-200 flex items-center justify-center space-x-2">
+            <i class="fab fa-facebook text-blue-600 text-lg"></i>
+            <a href="https://www.facebook.com/3X0TT" target="_blank" class="text-sm text-blue-600 font-medium hover:text-blue-800 transition duration-150">
+                Follow 3X0TT on Facebook!
+            </a>
+        </div>
+
+        <!-- Chat Window (Scrollable) -->
+        <main id="chat-window" class="flex-grow overflow-y-auto p-4 space-y-4">
+            <!-- Initial Greeting Message -->
+            <div class="flex justify-start">
+                <div class="max-w-xs md:max-w-sm bg-gray-100 p-3 rounded-tr-xl rounded-bl-xl rounded-br-xl shadow-md text-gray-800">
+                    <p class="font-bold text-indigo-600 mb-1">Rakshak AI</p>
+                    <p>Hello! I am Rakshak, your personal AI assistant. How can I help you today?</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- Input Area and Loading Indicator -->
+        <footer class="p-4 border-t border-gray-200 bg-white rounded-b-xl">
+            <div id="loading-indicator" class="text-center text-sm text-indigo-500 mb-2 hidden">
+                <i class="fas fa-spinner fa-spin mr-2"></i> Rakshak is typing...
+            </div>
+            <div class="flex space-x-2">
+                <input 
+                    type="text" 
+                    id="user-input" 
+                    placeholder="Ask Rakshak a question..."
+                    class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 shadow-inner"
+                    autocomplete="off"
+                />
+                <button 
+                    id="send-button" 
+                    class="bg-indigo-600 text-white p-3 rounded-lg shadow-md hover:bg-indigo-700 transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                    disabled
+                >
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </footer>
+
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- GLOBAL CONSTANTS ---
+        const API_URL_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/';
+        const MODEL_NAME = 'gemini-2.5-flash-preview-09-2025';
+
+        // --- DOM Elements ---
+        const chatWindow = document.getElementById('chat-window');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        
+        let chatHistory = [];
+        let isAuthReady = false;
+        let auth, db;
+        
+        // --- FIREBASE INITIALIZATION & AUTHENTICATION (MANDATORY) ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        try {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            setLogLevel('Debug'); // Enable Firebase logging
+            
+            // 1. Authenticate using the provided token or anonymously
+            async function authenticate() {
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Firebase authentication failed:", error);
+                    // Fallback to anonymous sign-in if custom token fails
+                    await signInAnonymously(auth);
+                }
+            }
+
+            // 2. Wait for auth state to be ready
+            onAuthStateChanged(auth, (user) => {
+                isAuthReady = true;
+                if (user) {
+                    console.log("User signed in with UID:", user.uid);
+                } else {
+                    console.log("User signed out or anonymous.");
+                }
+                sendButton.disabled = false; // Enable UI interaction once authenticated
+            });
+
+            authenticate();
+            
+        } catch (error) {
+            console.error("Firebase initialization failed:", error);
+            // If Firebase fails completely, still allow basic chat (without persistence/auth)
+            isAuthReady = true;
+            sendButton.disabled = false;
+        }
+
+        // --- HELPER FUNCTIONS ---
+
+        // Function to safely create and append a message element
+        function appendMessage(sender, text) {
+            const isUser = sender === 'user';
+            const alignment = isUser ? 'justify-end' : 'justify-start';
+            const bgColor = isUser ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-800';
+            const nameColor = isUser ? 'text-white' : 'text-indigo-600';
+            const borderRadius = isUser ? 'rounded-tl-xl rounded-tr-xl rounded-bl-xl' : 'rounded-tr-xl rounded-bl-xl rounded-br-xl';
+            const displayName = isUser ? 'You' : 'Rakshak AI';
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flex ${alignment}`;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = `max-w-xs md:max-w-sm p-3 shadow-md ${bgColor} ${borderRadius}`;
+            
+            contentDiv.innerHTML = `<p class="font-bold ${nameColor} mb-1">${displayName}</p><p>${text.replace(/\n/g, '<br>')}</p>`;
+
+            messageDiv.appendChild(contentDiv);
+            chatWindow.appendChild(messageDiv);
+            chatWindow.scrollTop = chatWindow.scrollHeight; // Auto-scroll to the latest message
+        }
+        
+        // --- GEMINI API CALL LOGIC ---
+        
+        async function fetchGeminiResponse(userQuery, history) {
+            const apiKey = ""; // API Key provided by runtime environment
+            const apiUrl = `${API_URL_BASE}${MODEL_NAME}:generateContent?key=${apiKey}`;
+
+            // Map internal history format to Gemini API format (role: user/model)
+            const contents = history.map(msg => ({
+                role: msg.sender === 'user' ? 'user' : 'model',
+                parts: [{ text: msg.text }]
+            }));
+            
+            // Add the new user query
+            contents.push({ role: 'user', parts: [{ text: userQuery }] });
+
+            const systemPrompt = "You are a helpful and friendly AI assistant named Rakshak. Keep your responses concise and positive.";
+
+            const payload = {
+                contents: contents,
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+                // No tools or grounding needed for basic chat
+            };
+
+            const maxRetries = 3;
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorBody = await response.json();
+                        // Check for rate limit or similar errors that might need retry
+                        if (response.status === 429 || response.status >= 500) {
+                            if (i < maxRetries - 1) {
+                                const delay = Math.pow(2, i) * 1000 + Math.random() * 1000; // Exponential backoff
+                                await new Promise(resolve => setTimeout(resolve, delay));
+                                continue; // Retry the request
+                            }
+                        }
+                        throw new Error(`API Error: ${response.status} - ${errorBody.error.message || 'Unknown error'}`);
+                    }
+
+                    const result = await response.json();
+                    const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    
+                    if (text) {
+                        return text;
+                    } else {
+                        return "Sorry, I couldn't generate a response. Please try again.";
+                    }
+                } catch (error) {
+                    console.error("Fetch attempt failed:", error);
+                    if (i === maxRetries - 1) {
+                        return `I'm currently unable to connect to my AI brain. Error: ${error.message}.`;
+                    }
+                    // Wait before next retry is handled by 'continue' above
+                }
+            }
+        }
+
+        // --- EVENT HANDLERS ---
+
+        async function handleSend() {
+            if (!isAuthReady || sendButton.disabled) return;
+
+            const query = userInput.value.trim();
+            if (query === "") return;
+
+            // 1. Update UI and disable input
+            appendMessage('user', query);
+            userInput.value = '';
+            sendButton.disabled = true;
+            userInput.disabled = true;
+            loadingIndicator.classList.remove('hidden');
+
+            // 2. Add user query to history
+            chatHistory.push({ sender: 'user', text: query });
+
+            // 3. Get AI response
+            const aiResponseText = await fetchGeminiResponse(query, chatHistory);
+
+            // 4. Update UI with AI response and re-enable input
+            appendMessage('model', aiResponseText);
+            
+            // 5. Add AI response to history
+            chatHistory.push({ sender: 'model', text: aiResponseText });
+
+            sendButton.disabled = false;
+            userInput.disabled = false;
+            loadingIndicator.classList.add('hidden');
+            userInput.focus();
+        }
+
+        // Send on button click
+        sendButton.addEventListener('click', handleSend);
+
+        // Send on Enter key press
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault(); // Prevent default form submission behavior
+                handleSend();
+            }
+        });
+        
+        // Enable button when input is not empty
+        userInput.addEventListener('input', () => {
+            sendButton.disabled = !userInput.value.trim() || !isAuthReady;
+        });
+    </script>
+</body>
+</html>
+
